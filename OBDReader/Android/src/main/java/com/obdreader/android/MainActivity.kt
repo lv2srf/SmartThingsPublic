@@ -44,6 +44,16 @@ class MainActivity : ComponentActivity() {
     private var outputStream: OutputStream? = null
     private var isConnected = mutableStateOf(false)
 
+    // Real-time data state
+    private var rpm = mutableStateOf(0)
+    private var speed = mutableStateOf(0)
+    private var coolantTemp = mutableStateOf(0)
+    private var throttle = mutableStateOf(0f)
+    private var engineLoad = mutableStateOf(0f)
+    private var fuelLevel = mutableStateOf(0f)
+    private var intakeAirTemp = mutableStateOf(0)
+    private var voltage = mutableStateOf(0.0)
+
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -80,6 +90,14 @@ class MainActivity : ComponentActivity() {
                 ) {
                     OBDReaderApp(
                         isConnected = isConnected.value,
+                        rpm = rpm.value,
+                        speed = speed.value,
+                        coolantTemp = coolantTemp.value,
+                        throttle = throttle.value,
+                        engineLoad = engineLoad.value,
+                        fuelLevel = fuelLevel.value,
+                        intakeAirTemp = intakeAirTemp.value,
+                        voltage = voltage.value,
                         onConnect = { device -> connectToDevice(device) },
                         onDisconnect = { disconnectFromDevice() },
                         onReadCodes = { readDiagnosticCodes() },
@@ -134,6 +152,9 @@ class MainActivity : ComponentActivity() {
                 withContext(Dispatchers.Main) {
                     isConnected.value = true
                 }
+
+                // Start real-time data polling
+                startDataPolling()
             } catch (e: IOException) {
                 e.printStackTrace()
                 withContext(Dispatchers.Main) {
@@ -141,6 +162,136 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    private fun startDataPolling() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            while (isConnected.value) {
+                try {
+                    // Read Engine RPM (PID 0x0C)
+                    val rpmResponse = sendCommand("01 0C\r")
+                    rpm.value = parseRPM(rpmResponse)
+
+                    // Read Vehicle Speed (PID 0x0D)
+                    val speedResponse = sendCommand("01 0D\r")
+                    speed.value = parseSpeed(speedResponse)
+
+                    // Read Coolant Temperature (PID 0x05)
+                    val coolantResponse = sendCommand("01 05\r")
+                    coolantTemp.value = parseCoolantTemp(coolantResponse)
+
+                    // Read Throttle Position (PID 0x11)
+                    val throttleResponse = sendCommand("01 11\r")
+                    throttle.value = parseThrottle(throttleResponse)
+
+                    // Read Engine Load (PID 0x04)
+                    val loadResponse = sendCommand("01 04\r")
+                    engineLoad.value = parseEngineLoad(loadResponse)
+
+                    // Read Fuel Level (PID 0x2F)
+                    val fuelResponse = sendCommand("01 2F\r")
+                    fuelLevel.value = parseFuelLevel(fuelResponse)
+
+                    // Read Intake Air Temp (PID 0x0F)
+                    val intakeResponse = sendCommand("01 0F\r")
+                    intakeAirTemp.value = parseIntakeAirTemp(intakeResponse)
+
+                    delay(500) // 500ms polling interval (2 Hz)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    delay(1000) // Longer delay on error
+                }
+            }
+        }
+    }
+
+    private fun parseRPM(response: String): Int {
+        try {
+            val hex = response.replace(Regex("[^0-9A-Fa-f]"), "")
+            if (hex.length >= 8) {
+                val a = hex.substring(4, 6).toInt(16)
+                val b = hex.substring(6, 8).toInt(16)
+                return ((a * 256 + b) / 4)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return 0
+    }
+
+    private fun parseSpeed(response: String): Int {
+        try {
+            val hex = response.replace(Regex("[^0-9A-Fa-f]"), "")
+            if (hex.length >= 6) {
+                return hex.substring(4, 6).toInt(16)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return 0
+    }
+
+    private fun parseCoolantTemp(response: String): Int {
+        try {
+            val hex = response.replace(Regex("[^0-9A-Fa-f]"), "")
+            if (hex.length >= 6) {
+                return hex.substring(4, 6).toInt(16) - 40
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return 0
+    }
+
+    private fun parseThrottle(response: String): Float {
+        try {
+            val hex = response.replace(Regex("[^0-9A-Fa-f]"), "")
+            if (hex.length >= 6) {
+                val value = hex.substring(4, 6).toInt(16)
+                return (value * 100f / 255f)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return 0f
+    }
+
+    private fun parseEngineLoad(response: String): Float {
+        try {
+            val hex = response.replace(Regex("[^0-9A-Fa-f]"), "")
+            if (hex.length >= 6) {
+                val value = hex.substring(4, 6).toInt(16)
+                return (value * 100f / 255f)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return 0f
+    }
+
+    private fun parseFuelLevel(response: String): Float {
+        try {
+            val hex = response.replace(Regex("[^0-9A-Fa-f]"), "")
+            if (hex.length >= 6) {
+                val value = hex.substring(4, 6).toInt(16)
+                return (value * 100f / 255f)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return 0f
+    }
+
+    private fun parseIntakeAirTemp(response: String): Int {
+        try {
+            val hex = response.replace(Regex("[^0-9A-Fa-f]"), "")
+            if (hex.length >= 6) {
+                return hex.substring(4, 6).toInt(16) - 40
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return 0
     }
 
     private fun disconnectFromDevice() {
@@ -181,7 +332,49 @@ class MainActivity : ComponentActivity() {
 
     private fun parseDTCs(response: String): List<String> {
         val codes = mutableListOf<String>()
-        // Simple DTC parsing (actual implementation would be more complex)
+
+        try {
+            // Remove non-hex characters
+            val cleanResponse = response.replace(Regex("[^0-9A-Fa-f]"), "")
+
+            // Response format: 43 [count] [DTC bytes...]
+            // Each DTC is 2 bytes
+            if (cleanResponse.length < 4) return codes
+
+            // Skip mode byte (43) and count byte, start at position 4
+            var i = 4
+            while (i + 3 < cleanResponse.length) {
+                val byte1 = cleanResponse.substring(i, i + 2).toIntOrNull(16) ?: break
+                val byte2 = cleanResponse.substring(i + 2, i + 4).toIntOrNull(16) ?: break
+
+                // Decode DTC
+                val typeChar = when ((byte1 shr 6) and 0x03) {
+                    0x00 -> 'P'  // Powertrain
+                    0x01 -> 'C'  // Chassis
+                    0x02 -> 'B'  // Body
+                    0x03 -> 'U'  // Network
+                    else -> 'P'
+                }
+
+                val firstDigit = (byte1 shr 4) and 0x03
+                val secondDigit = byte1 and 0x0F
+                val thirdDigit = (byte2 shr 4) and 0x0F
+                val fourthDigit = byte2 and 0x0F
+
+                val dtcCode = "$typeChar$firstDigit${secondDigit.toString(16).uppercase()}" +
+                             "${thirdDigit.toString(16).uppercase()}${fourthDigit.toString(16).uppercase()}"
+
+                // Skip padding codes (0000)
+                if (dtcCode != "P0000") {
+                    codes.add(dtcCode)
+                }
+
+                i += 4
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
         return codes
     }
 
@@ -195,6 +388,14 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun OBDReaderApp(
     isConnected: Boolean,
+    rpm: Int,
+    speed: Int,
+    coolantTemp: Int,
+    throttle: Float,
+    engineLoad: Float,
+    fuelLevel: Float,
+    intakeAirTemp: Int,
+    voltage: Double,
     onConnect: (BluetoothDevice) -> Unit,
     onDisconnect: () -> Unit,
     onReadCodes: () -> List<String>,
@@ -203,10 +404,6 @@ fun OBDReaderApp(
 ) {
     var selectedTab by remember { mutableStateOf(0) }
     var showDeviceDialog by remember { mutableStateOf(false) }
-    var rpm by remember { mutableStateOf(0) }
-    var speed by remember { mutableStateOf(0) }
-    var coolantTemp by remember { mutableStateOf(0) }
-    var throttle by remember { mutableStateOf(0f) }
 
     Scaffold(
         topBar = {
@@ -271,7 +468,7 @@ fun OBDReaderApp(
     ) { padding ->
         Box(modifier = Modifier.padding(padding)) {
             when (selectedTab) {
-                0 -> DashboardScreen(rpm, speed, coolantTemp, throttle)
+                0 -> DashboardScreen(rpm, speed, coolantTemp, throttle, engineLoad, fuelLevel, intakeAirTemp, voltage)
                 1 -> TroubleCodesScreen(onReadCodes, onClearCodes)
                 2 -> VehicleInfoScreen()
                 3 -> ActuatorTestsScreen()
@@ -292,14 +489,23 @@ fun OBDReaderApp(
 }
 
 @Composable
-fun DashboardScreen(rpm: Int, speed: Int, coolantTemp: Int, throttle: Float) {
+fun DashboardScreen(
+    rpm: Int,
+    speed: Int,
+    coolantTemp: Int,
+    throttle: Float,
+    engineLoad: Float,
+    fuelLevel: Float,
+    intakeAirTemp: Int,
+    voltage: Double
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF1E1E1E))
             .padding(16.dp)
     ) {
-        // Metrics Grid
+        // Metrics Grid Row 1
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly
@@ -310,12 +516,35 @@ fun DashboardScreen(rpm: Int, speed: Int, coolantTemp: Int, throttle: Float) {
 
         Spacer(Modifier.height(16.dp))
 
+        // Metrics Grid Row 2
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
             MetricCard("Coolant", coolantTemp.toString(), "°C", Color(0xFFFF9800))
             MetricCard("Throttle", String.format("%.1f", throttle), "%", Color(0xFF9C27B0))
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        // Metrics Grid Row 3
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            MetricCard("Load", String.format("%.1f", engineLoad), "%", Color(0xFFE91E63))
+            MetricCard("Fuel", String.format("%.1f", fuelLevel), "%", Color(0xFFFFC107))
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        // Metrics Grid Row 4
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            MetricCard("Intake", intakeAirTemp.toString(), "°C", Color(0xFF00BCD4))
+            MetricCard("Battery", String.format("%.1f", voltage), "V", Color(0xFF8BC34A))
         }
     }
 }
@@ -467,7 +696,32 @@ fun ActuatorTestsScreen() {
         ActuatorTestCard(
             "EVAP System Test",
             "Tests the evaporative emission control system for leaks",
-            onClick = { /* Run test */ }
+            onClick = {
+                // Send Mode 08 command for EVAP leak test (TID 0x01)
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val response = sendCommand("08 01\r")
+                        withContext(Dispatchers.Main) {
+                            if (response.contains("48")) {
+                                // Test initiated successfully
+                                android.widget.Toast.makeText(
+                                    this@MainActivity,
+                                    "EVAP test initiated. Check results after 2-5 minutes.",
+                                    android.widget.Toast.LENGTH_LONG
+                                ).show()
+                            } else {
+                                android.widget.Toast.makeText(
+                                    this@MainActivity,
+                                    "EVAP test not supported or failed",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+            }
         )
 
         Spacer(Modifier.height(16.dp))
@@ -475,7 +729,32 @@ fun ActuatorTestsScreen() {
         ActuatorTestCard(
             "Catalytic Converter Test",
             "Tests catalytic converter efficiency",
-            onClick = { /* Run test */ }
+            onClick = {
+                // Send Mode 08 command for catalyst test (TID 0x05)
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val response = sendCommand("08 05\r")
+                        withContext(Dispatchers.Main) {
+                            if (response.contains("48")) {
+                                // Test initiated successfully
+                                android.widget.Toast.makeText(
+                                    this@MainActivity,
+                                    "Catalyst test initiated. Drive normally for 5-10 minutes.",
+                                    android.widget.Toast.LENGTH_LONG
+                                ).show()
+                            } else {
+                                android.widget.Toast.makeText(
+                                    this@MainActivity,
+                                    "Catalyst test not supported or failed",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+            }
         )
     }
 }

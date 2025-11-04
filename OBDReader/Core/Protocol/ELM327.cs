@@ -67,29 +67,36 @@ namespace OBDReader.Core.Protocol
                 await Task.Delay(100); // Allow port to stabilize
 
                 // Reset adapter
-                if (!await SendCommandAsync("ATZ"))
+                string resetResponse = await SendCommandAsync("ATZ");
+                // ATZ returns device identifier (e.g., "ELM327 v1.5")
+                if (string.IsNullOrEmpty(resetResponse))
                     return false;
 
                 await Task.Delay(500); // Wait for reset
 
                 // Disable echo
-                if (!await SendCommandAsync("ATE0"))
+                string echoResponse = await SendCommandAsync("ATE0");
+                if (string.IsNullOrEmpty(echoResponse))
                     return false;
 
                 // Disable line feeds
-                if (!await SendCommandAsync("ATL0"))
+                string lfResponse = await SendCommandAsync("ATL0");
+                if (string.IsNullOrEmpty(lfResponse))
                     return false;
 
                 // Disable spaces
-                if (!await SendCommandAsync("ATS0"))
+                string spaceResponse = await SendCommandAsync("ATS0");
+                if (string.IsNullOrEmpty(spaceResponse))
                     return false;
 
                 // Enable headers (for CAN analysis)
-                if (!await SendCommandAsync("ATH1"))
+                string headerResponse = await SendCommandAsync("ATH1");
+                if (string.IsNullOrEmpty(headerResponse))
                     return false;
 
                 // Set protocol to automatic ISO 15765-4 (CAN)
-                if (!await SendCommandAsync("ATSP0"))
+                string protocolResponse = await SendCommandAsync("ATSP0");
+                if (string.IsNullOrEmpty(protocolResponse))
                     return false;
 
                 // Get device description

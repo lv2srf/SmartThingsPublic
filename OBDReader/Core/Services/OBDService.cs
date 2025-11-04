@@ -283,10 +283,30 @@ namespace OBDReader.Core.Services
 
                 if (response.Length >= 2 && response[0] == 0x45)
                 {
-                    // Parse sensor test results
-                    // Format varies by sensor, typically includes voltage and current measurements
                     results["Sensor_ID"] = sensorId;
-                    // Additional parsing based on response data
+
+                    // Parse O2 sensor test results
+                    // Response format: 45 [TID] [data bytes...]
+                    if (response.Length >= 4)
+                    {
+                        // Voltage (byte 2-3): A*256 + B, scaled to 0-1.275V
+                        double voltage = ((response[2] * 256.0 + response[3]) / 1000.0);
+                        results["Voltage"] = voltage;
+                    }
+
+                    if (response.Length >= 6)
+                    {
+                        // Current (byte 4-5): A*256 + B, scaled to mA
+                        double current = ((response[4] * 256.0 + response[5] - 32768) / 256.0);
+                        results["Current"] = current;
+                    }
+
+                    if (response.Length >= 8)
+                    {
+                        // Min/Max values if available
+                        results["Min_Voltage"] = response[6] / 200.0;
+                        results["Max_Voltage"] = response[7] / 200.0;
+                    }
                 }
             }
             catch (Exception ex)
@@ -317,8 +337,56 @@ namespace OBDReader.Core.Services
                 if (response.Length >= 2 && response[0] == 0x46)
                 {
                     // Parse monitoring test results
-                    // This includes min/max values for various monitored components
-                    StatusChanged?.Invoke(this, "Monitoring test results retrieved");
+                    // Response format: 46 [TID] [test data...]
+                    // Each test result is typically 4-6 bytes: TID, component ID, min, max, test value
+
+                    int offset = 1; // Skip mode byte
+                    int testNumber = 0;
+
+                    while (offset + 4 <= response.Length)
+                    {
+                        byte testId = response[offset];
+                        byte componentId = response[offset + 1];
+
+                        // Test value (bytes 2-3)
+                        int testValue = (response[offset + 2] << 8) | response[offset + 3];
+
+                        // Min value (bytes 4-5) if available
+                        int minValue = 0;
+                        int maxValue = 0;
+
+                        if (offset + 6 <= response.Length)
+                        {
+                            minValue = (response[offset + 4] << 8) | response[offset + 5];
+                        }
+
+                        // Max value (bytes 6-7) if available
+                        if (offset + 8 <= response.Length)
+                        {
+                            maxValue = (response[offset + 6] << 8) | response[offset + 7];
+                            offset += 8;
+                        }
+                        else
+                        {
+                            offset += 6;
+                        }
+
+                        // Store result
+                        string testKey = $"Test_{testNumber:D2}_TID_{testId:X2}";
+                        results[testKey] = new
+                        {
+                            TestId = testId,
+                            ComponentId = componentId,
+                            Value = testValue,
+                            Min = minValue,
+                            Max = maxValue,
+                            Status = (testValue >= minValue && testValue <= maxValue) ? "PASS" : "FAIL"
+                        };
+
+                        testNumber++;
+                    }
+
+                    StatusChanged?.Invoke(this, $"Retrieved {testNumber} monitoring test results");
                 }
             }
             catch (Exception ex)
